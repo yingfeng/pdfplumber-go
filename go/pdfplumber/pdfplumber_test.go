@@ -256,6 +256,28 @@ func TestIsGarbledByFontEncoding(t *testing.T) {
 	}
 }
 
+func TestGetPageText(t *testing.T) {
+	if fixtureDir == "" {
+		t.Skip("fixture directory not found")
+	}
+	doc, err := Open(filepath.Join(fixtureDir, "simple_text.pdf"))
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer doc.Close()
+
+	text, err := doc.GetPageText(0)
+	if err != nil {
+		t.Fatalf("GetPageText failed: %v", err)
+	}
+	if len(text) == 0 {
+		t.Error("expected non-empty text")
+	}
+	if text != "Hello World" && !strings.Contains(text, "Hello") {
+		t.Errorf("unexpected text: %q", text)
+	}
+}
+
 func TestRenderPage(t *testing.T) {
 	if fixtureDir == "" {
 		t.Skip("fixture directory not found")
