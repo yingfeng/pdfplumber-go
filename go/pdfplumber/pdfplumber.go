@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 
 	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
@@ -114,6 +115,32 @@ func (d *Document) GetDedupePageChars(pageIdx int, tolerance float64) ([]Char, e
 		return nil, err
 	}
 	return dedupeChars(chars, tolerance), nil
+}
+
+// GetPageText extracts plain text from a page (0-indexed), matching pypdf's
+// page.extract_text() behavior. Chars are assembled in reading order (top→x0).
+func (d *Document) GetPageText(pageIdx int) (string, error) {
+	chars, err := d.GetPageChars(pageIdx)
+	if err != nil {
+		return "", err
+	}
+	if len(chars) == 0 {
+		return "", nil
+	}
+	// Sort by reading order: page_number, top, x0
+	sorted := make([]Char, len(chars))
+	copy(sorted, chars)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Top != sorted[j].Top {
+			return sorted[i].Top < sorted[j].Top
+		}
+		return sorted[i].X0 < sorted[j].X0
+	})
+	var b strings.Builder
+	for _, c := range sorted {
+		b.WriteString(c.Text)
+	}
+	return b.String(), nil
 }
 
 func dedupeChars(chars []Char, tolerance float64) []Char {
