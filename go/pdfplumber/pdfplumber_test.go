@@ -33,7 +33,6 @@ func TestOpenFile(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	defer doc.Close()
-
 	if doc.PageCount() != 1 {
 		t.Fatalf("expected 1 page, got %d", doc.PageCount())
 	}
@@ -52,7 +51,6 @@ func TestOpenBytes(t *testing.T) {
 		t.Fatalf("OpenBytes failed: %v", err)
 	}
 	defer doc.Close()
-
 	if doc.PageCount() != 1 {
 		t.Fatalf("expected 1 page, got %d", doc.PageCount())
 	}
@@ -133,7 +131,6 @@ func TestMultiPage(t *testing.T) {
 	if doc.PageCount() < 2 {
 		t.Fatalf("expected at least 2 pages, got %d", doc.PageCount())
 	}
-
 	for i := 0; i < doc.PageCount(); i++ {
 		chars, err := doc.GetPageChars(i)
 		if err != nil {
@@ -160,12 +157,10 @@ func TestHasColor(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	defer doc.Close()
-
 	chars, err := doc.GetPageChars(0)
 	if err != nil {
 		t.Fatalf("GetPageChars failed: %v", err)
 	}
-
 	hasColor := 0
 	for _, c := range chars {
 		if HasColor(&c) {
@@ -208,7 +203,7 @@ func TestMultiplePDFs(t *testing.T) {
 }
 
 func TestHasSubsetFontPrefix(t *testing.T) {
-	tests := []struct {
+	for _, tt := range []struct {
 		input string
 		want  bool
 	}{
@@ -219,8 +214,7 @@ func TestHasSubsetFontPrefix(t *testing.T) {
 		{"", false},
 		{"A+", false},
 		{"ABCDEFG+Long", false},
-	}
-	for _, tt := range tests {
+	} {
 		got := HasSubsetFontPrefix(tt.input)
 		if got != tt.want {
 			t.Errorf("HasSubsetFontPrefix(%q) = %v, want %v", tt.input, got, tt.want)
@@ -229,20 +223,13 @@ func TestHasSubsetFontPrefix(t *testing.T) {
 }
 
 func TestIsGarbledChar(t *testing.T) {
-	tests := []struct {
+	for _, tt := range []struct {
 		r    rune
 		want bool
 	}{
-		{0xE000, true},
-		{0xF8FF, true},
-		{0xFFFD, true},
-		{0x00, false},
-		{'A', false},
-		{'中', false},
-		{'\n', false},
-		{0x7F, false},
-	}
-	for _, tt := range tests {
+		{0xE000, true}, {0xF8FF, true}, {0xFFFD, true},
+		{0x00, false}, {'A', false}, {'中', false}, {'\n', false}, {0x7F, false},
+	} {
 		got := IsGarbledChar(tt.r)
 		if got != tt.want {
 			t.Errorf("IsGarbledChar(%U) = %v, want %v", tt.r, got, tt.want)
@@ -273,15 +260,12 @@ func TestRenderPage(t *testing.T) {
 	if fixtureDir == "" {
 		t.Skip("fixture directory not found")
 	}
-
 	data, err := os.ReadFile(filepath.Join(fixtureDir, "simple_text.pdf"))
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
-
 	res, err := RenderPage(data, 0, 216.0)
 	if err != nil {
-		// Skip if rendering is unsupported (native library missing rendering feature)
 		if strings.Contains(err.Error(), "code 8") || strings.Contains(err.Error(), "unsupported") {
 			t.Skipf("rendering not available: %v", err)
 		}
@@ -296,7 +280,6 @@ func TestRenderPage(t *testing.T) {
 	if len(res.Data) != res.Width*res.Height*res.Channels {
 		t.Errorf("data size mismatch: %d != %d", len(res.Data), res.Width*res.Height*res.Channels)
 	}
-
 	img := res.ToImage()
 	if img.Bounds().Dx() != res.Width || img.Bounds().Dy() != res.Height {
 		t.Errorf("image size mismatch: %v != %dx%d", img.Bounds(), res.Width, res.Height)

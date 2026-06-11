@@ -1,10 +1,6 @@
-// Package pdfplumber provides a pure-Go pdfplumber-compatible PDF library.
-//
-// Backed by pdf_oxide for all PDF parsing and rendering.
 package pdfplumber
 
 import (
-	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -15,8 +11,6 @@ import (
 	pdfoxide "github.com/yfedoseev/pdf_oxide/go"
 )
 
-// Char represents a single character from a PDF page, matching pdfplumber's
-// char dict format.
 type Char struct {
 	Text              string    `json:"text"`
 	Fontname          string    `json:"fontname"`
@@ -37,12 +31,10 @@ type Char struct {
 	PageNumber        int       `json:"page_number"`
 }
 
-// Document represents an opened PDF document.
 type Document struct {
 	inner *pdfoxide.PdfDocument
 }
 
-// Open opens a PDF from a file path.
 func Open(path string) (*Document, error) {
 	doc, err := pdfoxide.Open(path)
 	if err != nil {
@@ -51,7 +43,6 @@ func Open(path string) (*Document, error) {
 	return &Document{inner: doc}, nil
 }
 
-// OpenBytes opens a PDF from raw bytes.
 func OpenBytes(data []byte) (*Document, error) {
 	doc, err := pdfoxide.OpenFromBytes(data)
 	if err != nil {
@@ -60,7 +51,6 @@ func OpenBytes(data []byte) (*Document, error) {
 	return &Document{inner: doc}, nil
 }
 
-// Close releases the document.
 func (d *Document) Close() {
 	if d.inner != nil {
 		d.inner.Close()
@@ -68,7 +58,6 @@ func (d *Document) Close() {
 	}
 }
 
-// PageCount returns the number of pages.
 func (d *Document) PageCount() int {
 	n, err := d.inner.PageCount()
 	if err != nil {
@@ -77,7 +66,6 @@ func (d *Document) PageCount() int {
 	return n
 }
 
-// GetPageChars extracts characters from a page (0-indexed).
 func (d *Document) GetPageChars(pageIdx int) ([]Char, error) {
 	n, err := d.inner.PageCount()
 	if err != nil {
@@ -120,7 +108,6 @@ func (d *Document) GetPageChars(pageIdx int) ([]Char, error) {
 	return chars, nil
 }
 
-// GetDedupePageChars returns deduplicated characters on a page (0-indexed).
 func (d *Document) GetDedupePageChars(pageIdx int, tolerance float64) ([]Char, error) {
 	chars, err := d.GetPageChars(pageIdx)
 	if err != nil {
@@ -128,8 +115,6 @@ func (d *Document) GetDedupePageChars(pageIdx int, tolerance float64) ([]Char, e
 	}
 	return dedupeChars(chars, tolerance), nil
 }
-
-// ── deduplication ──────────────────────────────────────────────────────
 
 func dedupeChars(chars []Char, tolerance float64) []Char {
 	if len(chars) == 0 {
@@ -163,17 +148,13 @@ func dedupeChars(chars []Char, tolerance float64) []Char {
 	return result
 }
 
-// ── rendering ──────────────────────────────────────────────────────────
-
-// RenderResult holds the result of rendering a PDF page.
 type RenderResult struct {
-	Data     []byte // RGBA pixel data
+	Data     []byte
 	Width    int
 	Height   int
-	Channels int // always 4 for RGBA
+	Channels int
 }
 
-// RenderPage renders a PDF page to RGBA pixels.
 func RenderPage(pdfData []byte, pageIdx int, dpi float64) (*RenderResult, error) {
 	if len(pdfData) == 0 {
 		return nil, fmt.Errorf("pdfplumber: empty PDF data for rendering")
@@ -189,7 +170,6 @@ func RenderPage(pdfData []byte, pageIdx int, dpi float64) (*RenderResult, error)
 		return nil, fmt.Errorf("pdfplumber: render page %d: %w", pageIdx, err)
 	}
 
-	// pdf_oxide returns premultiplied RGBA; convert to straight RGBA.
 	data := make([]byte, len(pixmap.Data))
 	for i := 0; i < len(pixmap.Data); i += 4 {
 		a := pixmap.Data[i+3]
@@ -205,20 +185,14 @@ func RenderPage(pdfData []byte, pageIdx int, dpi float64) (*RenderResult, error)
 	return &RenderResult{Data: data, Width: pixmap.Width, Height: pixmap.Height, Channels: 4}, nil
 }
 
-// ToImage converts a RenderResult to an image.RGBA.
 func (r *RenderResult) ToImage() *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, r.Width, r.Height))
 	copy(img.Pix, r.Data)
 	return img
 }
 
-// ColorModel implements image.Image.
 func (r *RenderResult) ColorModel() color.Model { return color.RGBAModel }
-
-// Bounds implements image.Image.
 func (r *RenderResult) Bounds() image.Rectangle { return image.Rect(0, 0, r.Width, r.Height) }
-
-// At implements image.Image.
 func (r *RenderResult) At(x, y int) color.Color {
 	if x < 0 || x >= r.Width || y < 0 || y >= r.Height {
 		return color.RGBA{}
@@ -230,14 +204,10 @@ func (r *RenderResult) At(x, y int) color.Color {
 	return color.RGBA{R: r.Data[idx], G: r.Data[idx+1], B: r.Data[idx+2], A: 255}
 }
 
-// InitRenderer is a no-op (rendering is built into pdf_oxide).
 func InitRenderer(path string) error { return nil }
-
-// ── RAGFlow utilities ──────────────────────────────────────────────────
 
 var noisePattern = regexp.MustCompile(`^[a-zT_\[\]\(\\)-]+$`)
 
-// HasColor replicates the RAGFlow pdf_parser.py _has_color logic.
 func HasColor(c *Char) bool {
 	if c.Ncs == "DeviceGray" {
 		if len(c.StrokingColor) > 0 && c.StrokingColor[0] == '1' &&
@@ -250,11 +220,7 @@ func HasColor(c *Char) bool {
 	return true
 }
 
-// IsGarbledChar checks if a character is garbled (PUA, replacement, control).
 func IsGarbledChar(ch rune) bool {
-	if ch == 0 {
-		return false
-	}
 	cp := int(ch)
 	if cp >= 0xE000 && cp <= 0xF8FF { return true }
 	if cp >= 0xF0000 && cp <= 0xFFFFF { return true }
@@ -262,10 +228,29 @@ func IsGarbledChar(ch rune) bool {
 	if cp == 0xFFFD { return true }
 	if cp < 0x20 && ch != '\t' && ch != '\n' && ch != '\r' { return true }
 	if cp >= 0x80 && cp <= 0x9F { return true }
+	// Surrogate (Cs category): Unicode surrogates D800-DFFF
+	if cp >= 0xD800 && cp <= 0xDFFF { return true }
+	// Unassigned (Cn category): noncharacters and reserved
+	if cp == 0xFFFE || cp == 0xFFFF { return true }
+	if cp >= 0x1FFFE && cp <= 0x1FFFF { return true }
+	if cp >= 0x2FFFE && cp <= 0x2FFFF { return true }
+	if cp >= 0x3FFFE && cp <= 0x3FFFF { return true }
+	if cp >= 0x4FFFE && cp <= 0x4FFFF { return true }
+	if cp >= 0x5FFFE && cp <= 0x5FFFF { return true }
+	if cp >= 0x6FFFE && cp <= 0x6FFFF { return true }
+	if cp >= 0x7FFFE && cp <= 0x7FFFF { return true }
+	if cp >= 0x8FFFE && cp <= 0x8FFFF { return true }
+	if cp >= 0x9FFFE && cp <= 0x9FFFF { return true }
+	if cp >= 0xAFFFE && cp <= 0xAFFFF { return true }
+	if cp >= 0xBFFFE && cp <= 0xBFFFF { return true }
+	if cp >= 0xCFFFE && cp <= 0xCFFFF { return true }
+	if cp >= 0xDFFFE && cp <= 0xDFFFF { return true }
+	if cp >= 0xEFFFE && cp <= 0xEFFFF { return true }
+	if cp >= 0xFFFFE && cp <= 0xFFFFF { return true }
+	if cp >= 0x10FFFE && cp <= 0x10FFFF { return true }
 	return false
 }
 
-// IsGarbledText checks if text contains too many garbled characters.
 func IsGarbledText(text string, threshold float64) bool {
 	if len(text) == 0 {
 		return false
@@ -291,7 +276,6 @@ func IsGarbledText(text string, threshold float64) bool {
 	return float64(garbledCount)/float64(total) >= threshold
 }
 
-// HasSubsetFontPrefix checks if a font name has a subset prefix.
 func HasSubsetFontPrefix(fontname string) bool {
 	if len(fontname) < 3 {
 		return false
@@ -300,7 +284,6 @@ func HasSubsetFontPrefix(fontname string) bool {
 	return re.MatchString(fontname)
 }
 
-// IsGarbledByFontEncoding detects garbled text from broken font encoding.
 func IsGarbledByFontEncoding(chars []Char, minChars int) bool {
 	if len(chars) < minChars {
 		return false
@@ -316,11 +299,9 @@ func IsGarbledByFontEncoding(chars []Char, minChars int) bool {
 			continue
 		}
 		totalNonSpace++
-
 		if HasSubsetFontPrefix(c.Fontname) {
 			subsetFontCount++
 		}
-
 		cp := int([]rune(text)[0])
 		if (cp >= 0x2E80 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF) ||
 			(cp >= 0x20000 && cp <= 0x2FA1F) ||
@@ -332,7 +313,6 @@ func IsGarbledByFontEncoding(chars []Char, minChars int) bool {
 			asciiPunctSym++
 		}
 	}
-
 	if totalNonSpace < minChars {
 		return false
 	}
@@ -348,22 +328,72 @@ func IsGarbledByFontEncoding(chars []Char, minChars int) bool {
 	return false
 }
 
-// ── JSON utilities ─────────────────────────────────────────────────────
+// ── RAGFlow char utility functions ──────────────────────────────────
 
-// MarshalCharsJSON returns the JSON representation of chars.
-func MarshalCharsJSON(chars []Char) string {
-	b, err := json.Marshal(chars)
-	if err != nil {
-		return fmt.Sprintf(`[{"error": "%s"}]`, err.Error())
+// CharWidth computes (x1-x0) / max(len(text), 1), matching RAGFlow's __char_width.
+func CharWidth(c *Char) float64 {
+	l := len(c.Text)
+	if l == 0 {
+		l = 1
 	}
-	return string(b)
+	return (c.X1 - c.X0) / float64(l)
 }
 
-// UnmarshalCharsJSON parses JSON back to []Char.
-func UnmarshalCharsJSON(data string) ([]Char, error) {
-	var chars []Char
-	if err := json.Unmarshal([]byte(data), &chars); err != nil {
-		return nil, err
+// CharHeight returns bottom - top, matching RAGFlow's __height.
+func CharHeight(c *Char) float64 {
+	return c.Bottom - c.Top
+}
+
+// XDis computes the minimum horizontal distance between two chars,
+// matching RAGFlow's _x_dis.
+func XDis(a, b *Char) float64 {
+	d1 := math.Abs(a.X1 - b.X0)
+	d2 := math.Abs(a.X0 - b.X1)
+	d3 := math.Abs(a.X0+a.X1-b.X0-b.X1) / 2.0
+	return math.Min(d1, math.Min(d2, d3))
+}
+
+// YDis computes the vertical distance between two chars (center to center),
+// matching RAGFlow's _y_dis.
+func YDis(a, b *Char) float64 {
+	return (b.Top + b.Bottom - a.Top - a.Bottom) / 2.0
+}
+
+// TotalPageNumber opens a PDF and returns the page count.
+func TotalPageNumber(path string, data []byte) (int, error) {
+	var doc *Document
+	var err error
+	if data != nil {
+		doc, err = OpenBytes(data)
+	} else {
+		doc, err = Open(path)
 	}
-	return chars, nil
+	if err != nil {
+		return 0, err
+	}
+	defer doc.Close()
+	return doc.PageCount(), nil
+}
+
+// SortXByPage sorts chars by page_number, x0, top and restores order
+// when x-difference is small, matching RAGFlow's sort_X_by_page.
+func SortXByPage(chars []Char, threshold float64) []Char {
+	sorted := make([]Char, len(chars))
+	copy(sorted, chars)
+	// Sort by page_number, x0, top
+	// Bubble sort to match RAGFlow's insertion-style algorithm
+	for i := 0; i < len(sorted); i++ {
+		for j := i; j > 0; j-- {
+			a, b := sorted[j-1], sorted[j]
+			if a.PageNumber != b.PageNumber {
+				break
+			}
+			if math.Abs(b.X0-a.X0) < threshold && b.Top < a.Top {
+				sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
+			} else {
+				break
+			}
+		}
+	}
+	return sorted
 }
