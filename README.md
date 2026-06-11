@@ -26,7 +26,110 @@ export CGO_LDFLAGS="$HOME/.cache/pdf_oxide/v0.3.63/lib/linux_amd64/libpdf_oxide.
 #    go get github.com/yfedoseev/pdf_oxide/go
 ```
 
-## Go API
+## RAGFlow pdf_parser.py API mapping
+
+When porting RAGFlow's `pdf_parser.py` to Go, use the following mapping
+to replace pdfplumber and pypdf.
+
+### 1. Document lifecycle
+
+| Python (pdfplumber / pypdf) | Go (pdfplumber-go) |
+|---|---|
+| `pdfplumber.open(path)` | `doc, err := pdfplumber.Open(path)` |
+| `pdfplumber.open(BytesIO(data))` | `doc, err := pdfplumber.OpenBytes(data)` |
+| `pdf2_read(path)` | `doc, err := pdfplumber.Open(path)` |
+| `pdf2_read(BytesIO(data))` | `doc, err := pdfplumber.OpenBytes(data)` |
+| `len(pdf.pages)` | `doc.PageCount()` |
+| `pdf.close()` | `doc.Close()` |
+
+### 2. Character extraction & rendering
+
+| Python | Go |
+|---|---|
+| `page.dedupe_chars().chars` | `chars, _ := doc.GetDedupePageChars(pageIdx, 1.0)` |
+| `page.chars` (raw) | `chars, _ := doc.GetPageChars(pageIdx)` |
+| `page.to_image(resolution, antialias=True).annotated` | `res, _ := pdfplumber.RenderPage(pdfBytes, pageIdx, dpi)` → `img := res.ToImage()` |
+| `page.extract_text()` (pypdf PlainParser) | `text, _ := doc.GetPageText(pageIdx)` |
+
+### 3. Char field access (dict key → struct field)
+
+| Python `c["..."]` | Go `c....` | Type |
+|---|---|---|
+| `c["text"]` | `c.Text` | `string` |
+| `c["fontname"]` | `c.Fontname` | `string` |
+| `c["x0"]`, `c["x1"]` | `c.X0`, `c.X1` | `float64` |
+| `c["top"]`, `c["bottom"]` | `c.Top`, `c.Bottom` | `float64` |
+| `c["width"]`, `c["height"]` | `c.Width`, `c.Height` | `float64` |
+| `c["ncs"]` | `c.Ncs` | `string` |
+| `c["stroking_color"]` | `c.StrokingColor` | `string` |
+| `c["non_stroking_color"]` | `c.NonStrokingColor` | `string` |
+| `c["page_number"]` | `c.PageNumber` | `int` |
+| `c["size"]` | `c.Size` | `float64` |
+| `c.get("text", "")` | `if c.Text != ""` | |
+| `c.get("fontname", "")` | `if c.Fontname != ""` | |
+
+### 4. RAGFlow utility functions (1:1 match)
+
+| pdf_parser.py | pdfplumber-go | Status |
+|---|---|---|
+| `_has_color(o)` | `pdfplumber.HasColor(&char)` | ✅ |
+| `_is_garbled_char(ch)` | `pdfplumber.IsGarbledChar(rune)` | ✅ (includes Cn/Cs) |
+| `_is_garbled_text(text, threshold)` | `pdfplumber.IsGarbledText(text, threshold)` | ✅ |
+| `_has_subset_font_prefix(fontname)` | `pdfplumber.HasSubsetFontPrefix(fontname)` | ✅ |
+| `_is_garbled_by_font_encoding(chars, min)` | `pdfplumber.IsGarbledByFontEncoding(chars, min)` | ✅ |
+| `__char_width(c)` | `pdfplumber.CharWidth(&char)` | ✅ |
+| `__height(c)` | `pdfplumber.CharHeight(&char)` | ✅ |
+| `_x_dis(a, b)` | `pdfplumber.XDis(&a, &b)` | ✅ |
+| `_y_dis(a, b)` | `pdfplumber.YDis(&a, &b)` | ✅ |
+| `sort_X_by_page(arr, threshold)` | `pdfplumber.SortXByPage(chars, threshold)` | ✅ |
+| `total_page_number(fnm, binary)` | `pdfplumber.TotalPageNumber(path, data)` | ✅ |
+
+### 5. RAGFlow pipeline steps (pseudocode)
+
+```go
+// Corresponds to RAGFlow __images__ (L1537-1544):
+doc, _ := pdfplumber.Open(fnm)
+defer doc.Close()
+
+for pageIdx := fromPage; pageIdx < toPage && pageIdx < doc.PageCount(); pageIdx++ {
+    // 1. Page rendering
+    dpi := 72 * zoomin
+    res, _ := pdfplumber.RenderPage(pdfBytes, pageIdx, float64(dpi))
+    pageImg := res.ToImage()  // *image.RGBA → feed to LayoutRecognizer
+
+    // 2. Character extraction + dedupe + _has_color filter
+    chars, _ := doc.GetDedupePageChars(pageIdx, 1.0)
+    filtered := make([]pdfplumber.Char, 0, len(chars))
+    for _, c := range chars {
+        if pdfplumber.HasColor(&c) {
+            filtered = append(filtered, c)
+        }
+    }
+    pageChars = filtered
+
+    // 3. Garbled text detection (L1557-1565)
+    sampleText := extractSampleText(pageChars)
+    if pdfplumber.IsGarbledText(sampleText, 0.3) {
+        pageChars = nil  // fall back to OCR
+        continue
+    }
+
+    // 4. Font-encoding garbling (L1567-1575)
+    if pdfplumber.IsGarbledByFontEncoding(pageChars) {
+        pageChars = nil  // fall back to OCR
+    }
+
+    // 5. OCR step (L1617-1618): median height/width from chars
+    if len(pageChars) > 0 {
+        heights := sortedCharHeights(pageChars)
+        meanHeight := median(heights)
+        widths := sortedCharWidths(pageChars)
+        meanWidth := median(widths)
+    }
+}
+```
+
+## Go API reference
 
 ```go
 import "github.com/infominer/pdfplumber-go/pdfplumber"
@@ -42,11 +145,12 @@ doc, _ = pdfplumber.OpenBytes(data)
 // Page count
 n := doc.PageCount()  // int
 
-// Character extraction (returns []pdfplumber.Char with all fields)
-chars, _ := doc.GetPageChars(0)
+// Character extraction
+chars, _ := doc.GetPageChars(0)             // []Char, raw
+chars, _ = doc.GetDedupePageChars(0, 1.0)   // []Char, deduplicated
 
-// Deduplicated characters
-chars, _ = doc.GetDedupePageChars(0, 1.0)
+// Plain text extraction (pypdf replacement)
+text, _ := doc.GetPageText(0)  // string
 
 // Page rendering (RGBA pixels)
 res, _ := pdfplumber.RenderPage(pdfBytes, 0, 216.0)
@@ -56,7 +160,7 @@ img := res.ToImage()  // *image.RGBA
 ### Char fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+|---|---|---|
 | `Text` | string | Character text |
 | `Fontname` | string | PDF font name |
 | `X0`, `X1` | float64 | Horizontal bounds |
@@ -71,39 +175,6 @@ img := res.ToImage()  // *image.RGBA
 | `Upright` | bool | Whether character is upright |
 | `Adv` | float64 | Character advance |
 | `Doctop` | float64 | Document-level top position |
-
-### RAGFlow utility functions
-
-```go
-// Character filtering (matches RAGFlow _has_color exactly)
-pdfplumber.HasColor(&char)  // bool
-
-// Garbled character detection (PUA, surrogate, noncharacter, control)
-pdfplumber.IsGarbledChar('A')  // bool — matches RAGFlow _is_garbled_char
-
-// Text-level garbled detection (CID pattern + threshold)
-pdfplumber.IsGarbledText(text, 0.5)  // bool
-
-// Subset font prefix detection (e.g. "DY1+FontName")
-pdfplumber.HasSubsetFontPrefix(fontname)  // bool
-
-// Font-encoding garbling detection (CJK mapped to ASCII)
-pdfplumber.IsGarbledByFontEncoding(chars, 20)  // bool
-
-// Char dimension utilities
-pdfplumber.CharWidth(&char)   // float64 — (x1-x0)/len(text)
-pdfplumber.CharHeight(&char)  // float64 — bottom-top
-
-// Distance utilities
-pdfplumber.XDis(&a, &b)  // float64 — horizontal distance
-pdfplumber.YDis(&a, &b)  // float64 — vertical distance
-
-// Sorting
-pdfplumber.SortXByPage(chars, threshold)  // []Char
-
-// Page count utility
-n, _ := pdfplumber.TotalPageNumber(path, data)  // (int, error)
-```
 
 ## Build & test
 
@@ -135,25 +206,17 @@ python3 tests/compare.py document.pdf --page 0 -v
 # Compare all pages
 python3 tests/compare.py document.pdf --all-pages
 
-# Machine-readable JSON output
+# Machine-readable JSON
 python3 tests/compare.py document.pdf --json | jq .
 
 # Exit code: 0 = all pass, 1 = some fail
 ```
 
-The comparison covers:
-- open (file + bytes), page count, close
-- Char extraction (all 16 fields)
-- `dedupe_chars` equivalence
-- `_has_color` filter logic
-- `_is_garbled_char` with Unicode category (Cn/Cs)
-- `_is_garbled_text` with CID pattern detection
-- `_has_subset_font_prefix`
-- `_is_garbled_by_font_encoding`
-- `__char_width`, `__height`
-- `_x_dis`, `_y_dis`
-- `sort_X_by_page`
-- `to_image` rendering
+Comparison covers: open (file + bytes), page count, Char extraction (all 16
+fields), `dedupe_chars`, `_has_color`, `_is_garbled_char`, `_is_garbled_text`,
+`_has_subset_font_prefix`, `_is_garbled_by_font_encoding`, `__char_width`,
+`__height`, `_x_dis`, `_y_dis`, `sort_X_by_page`, `to_image` rendering,
+plain text extraction (pypdf replacement).
 
 ## Architecture
 
@@ -187,7 +250,7 @@ pdfplumber-go/
 ├── go/pdfplumber/
 │   ├── go.mod
 │   ├── pdfplumber.go       # Core API + RAGFlow utility functions
-│   ├── pdfplumber_test.go  # 12 Go tests
+│   ├── pdfplumber_test.go  # 13 Go tests
 │   └── cmd/dumpchars/      # CLI tool for Python comparison
 └── tests/
     └── compare.py           # pdfplumber-go vs pdfplumber comparison
